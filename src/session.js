@@ -40,15 +40,18 @@ function updateSession(sessionId) {
     return sessionId;
 }
 
-function createSession(req, res, sessionCookieName) {
+function createSession(req, res, sessionCookieName, sessionPath) {
     var sessionId = cookie.getCookie(req, sessionCookieName);
     if (!sessionId) {
-
         sessionId = generateSession();
     } else {
         sessionId = updateSession(sessionId);
     }
-    cookie.setCookie(res, sessionCookieName, sessionId);
+    var sessionString = sessionId;
+    if (sessionPath) {
+      sessionString += ';Path=' + sessionPath;
+    }
+    cookie.setCookie(res, sessionCookieName, sessionString);
     return sessionId;
 }
 
@@ -73,14 +76,32 @@ function getData(sessionId, name) {
     }
 }
 
+var validityCheckInitiated = false;
+function checkSessionValidity() {
+  if (validityCheckInitiated) {
+    return;
+  }
+  validityCheckInitiated = true;
+  setInterval(function () {
+      var minLastAccess = Date.now() - sessionLifeTime;
+      Object.keys(sessions).forEach(function (sessionId) {
+          if (sessions[sessionId].date < minLastAccess) {
+              invalidateSession(sessionId);
+          }
+      });
+  }, 59000);
+}
 
 function Session(req, res, conf) {
     conf = conf || {};
     this.maxSize = conf.maxSize || 262144;
     this.sessionName = conf.sessionName || 'nodesess';
-    this.sessionId = createSession(req, res, this.sessionName);
+    this.sessionPath = '' || conf.sessionPath;
+    this.sessionId = createSession(req, res, this.sessionName, this.sessionPath);
+    checkSessionValidity();
 }
-Session.prototype.checkDataSize = function (value) {
+Session.prototype = {
+  checkDataSize: function (value) {
     var sess = getSession(this.sessionId),
         size = 0;
     Object.keys(sess.data).forEach(function (name) {
@@ -89,8 +110,8 @@ Session.prototype.checkDataSize = function (value) {
         }
     });
     return (size + Buffer.byteLength(value)) <= this.maxSize;
-};
-Session.prototype.setData = function (name, value) {
+  },
+  setData: function (name, value) {
     this.sessionId = updateSession(this.sessionId);
     if (value === null) {
         setData(this.sessionId, name, value);
@@ -99,22 +120,14 @@ Session.prototype.setData = function (name, value) {
     } else {
         throw new RangeError('Can\'t set data, limit exceeded. ');
     }
-};
-Session.prototype.getData = function (name) {
+  },
+  getData: function (name) {
     this.sessionId = updateSession(this.sessionId);
     return getData(this.sessionId, name);
+  },
+  invalidate: function () {
+      invalidateSession(this.sessionId);
+  }
 };
-Session.prototype.invalidate = function () {
-    invalidateSession(this.sessionId);
-};
-
-setInterval(function () {
-    var minLastAccess = Date.now() - sessionLifeTime;
-    Object.keys(sessions).forEach(function (sessionId) {
-        if (sessions[sessionId].date < minLastAccess) {
-            invalidateSession(sessionId);
-        }
-    });
-}, 59000);
 
 exports.Session = Session;
